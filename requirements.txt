@@ -1,0 +1,8 @@
+timm
+lightning
+wandb
+albumentations
+opencv-python
+timm
+numpy
+matplotlib
