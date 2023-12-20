@@ -15,8 +15,8 @@ import os
 import collections
 import string
 
-images_path = "/home/pedro/Downloads/Data_and_Labels-20231211T105756Z-001/Data_and_Labels/Data"
-labels_file = "/home/pedro/Downloads/Data_and_Labels-20231211T105756Z-001/Data_and_Labels/Labels.json"
+images_path = "/content/Data_and_Labels/Data"
+labels_file = "/content/Data_and_Labels/Labels.json"
 MODEL_NAME = "resnet50"
 PRETRAINED = True
 BATCH_SIZE = 8
