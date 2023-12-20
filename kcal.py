@@ -1,57 +1,41 @@
-import json
-import os
-!pip install timm lightning
-import timm
-import lightning as L
-!pip install wandb
-!wandb login
-import wandb
-from torchvision.transforms import v2
-import torchmetrics
-import sklearn.model_selection as skm
-import collections
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2
-import glob
-from tqdm import tqdm
 import numpy as np
+import timm
+import lightning as L
+import wandb
 import random
 import torch
-from torch import nn
-from torch import optim
-import torch.nn.functional as F
-from torchvision import datasets, transforms, models
-from torch.utils.data import Dataset, DataLoader
-from dotenv import load_dotenv
-load_dotenv()
+from torch.utils.data import Dataset
+import matplotlib.pyplot as plt
 
-###
-# Architecture parameters
-###
-MODEL_NAME = os.environ("MODEL_NAME")
-PRETRAINED = os.environ("PRETAINED")
-BATCH_SIZE = os.environ("BATCH_SIZE")
-EPOCHS = os.environ("EPOCHS")
-K_FOLDS = os.environ("K_FOLDS")
-RESOLUTION = os.environ("RESOLUTION")
-WANDB_PROJECT = os.environ("WANDB_PROJECT")
-WANDB_ENTITY = os.environ("WANDB_ENTITY")
-WANDB_GROUP = os.environ("WANDB_GROUP")
-#####
-# Transforms (will need to be adjusted and split later)
-#####
+import json
+import os
+import collections
+import string
+
+images_path = "/content/Data_and_Labels/Data"
+labels_file = "/content/Data_and_Labels/Labels.json"
+MODEL_NAME = "resnet50"
+PRETRAINED = True
+BATCH_SIZE = 8
+EPOCHS = 20
+K_FOLDS = 2
+RESOLUTION = 256
+WANDB_PROJECT = 'deep-kcal'
+WANDB_ENTITY = 'petrdvoracek'
+WANDB_GROUP = ''.join(random.choices(string.ascii_uppercase, k=10))
+
 my_transforms = A.Compose([
     A.RandomRotate90(p=0.5),
     #A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15, p=0.5),
     A.Resize(height=256, width=256),
     ToTensorV2(),
 ])
-#####
-# My Dataset Loader Class
-#####
-class ProductDataset(Dataset):
 
+class ProductDataset(Dataset):
+    """asdasd"""
     def get_labels(self):
         labels_array = [self.extract_label_digits(filename, self.labels.get(filename, -1)) for filename in self.image_paths]
         return labels_array
@@ -131,11 +115,8 @@ class ProductDataset(Dataset):
       except Exception as e:
           print(f"Error processing image at index {idx}: {str(e)}")
           return None, None
-#####
+
 # Initialize Dataset
-#####
-images_path = "./Data/"
-labels_file = "./Labels.json"
 image_filenames = os.listdir(images_path)
 
 dataset = ProductDataset(image_filenames, labels_file, my_transforms)
@@ -143,9 +124,8 @@ print(f"Dataset instance: {dataset[0][1]}")
 print(f"Dataset image paths: {dataset.image_paths}")
 
 print(f"The dataset contains {len(dataset)} samples.")
-#####
+
 # Visualizing a random image and priting some debugging info to see if nothing's broken
-#####
 random_index = random.sample(range(len(dataset)), min(1, len(dataset)))
 image, label = dataset[random_index[0]]
 print(f"Random Image: Shape={image.shape}, Label={label}")
@@ -153,9 +133,8 @@ image_np = np.transpose(image.cpu().numpy(), (1, 2, 0))
 plt.imshow(image_np)
 plt.title(f"Label: {label}")
 plt.show()
-#####
+
 # Labels histograms function
-#####
 def plot_label_hist(labels, name):
     units = []
     tens = []
@@ -229,16 +208,14 @@ def plot_label_hist(labels, name):
     print(len(hundreds))
     print(len(tens))
     print(len(units))
-#####
+
 # Printing the histograms
-#####
 dataset_labels = dataset.get_labels()
 print(dataset_labels)
 print(len(dataset_labels))
 plot_label_hist(dataset_labels, "Label Histogram")
-#####
+
 # Neural Network Training Class
-#####
 class Trainee(L.LightningModule):
     def __init__(self, model):
         super().__init__()
@@ -309,9 +286,8 @@ class Trainee(L.LightningModule):
             milestones=[int(EPOCHS * x) for x in step_fractions],
         )
         return [optimizer], [lr_scheduler]
-#####
+
 # Training
-#####
 wandb.finish()
 wandb_logger = L.pytorch.loggers.WandbLogger(
   project=WANDB_PROJECT,
