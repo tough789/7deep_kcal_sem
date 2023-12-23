@@ -9,6 +9,8 @@ import random
 import torch
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
+from sklearn.model_selection import KFold
+from sklearn.metrics import accuracy_score
 
 import json
 import os
@@ -20,17 +22,31 @@ labels_file = "/content/Data_and_Labels/Labels.json"
 MODEL_NAME = "resnet50"
 PRETRAINED = True
 BATCH_SIZE = 8
-EPOCHS = 20
-K_FOLDS = 2
-RESOLUTION = 256
+EPOCHS = 10
+K_FOLDS = 4
+RESOLUTION = 512
 WANDB_PROJECT = 'deep-kcal'
-WANDB_ENTITY = 'petrdvoracek'
+WANDB_ENTITY = 'your-entity-name'
 WANDB_GROUP = ''.join(random.choices(string.ascii_uppercase, k=10))
 
 my_transforms = A.Compose([
     A.RandomRotate90(p=0.5),
-    #A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15, p=0.5),
-    A.Resize(height=256, width=256),
+    A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15, p=0.5),
+    A.Resize(height=512, width=512),
+    ToTensorV2(),
+])
+
+train_transforms = A.Compose([
+    A.RandomRotate90(p=0.5),
+    A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15, p=0.5),
+    A.Resize(height=512, width=512),
+    ToTensorV2(),
+])
+
+val_transforms = A.Compose([
+    A.RandomRotate90(p=0.5),
+    A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15, p=0.5),
+    A.Resize(height=512, width=512),
     ToTensorV2(),
 ])
 
@@ -269,7 +285,22 @@ class Trainee(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        self._step(x, y, batch_idx, "val")
+        loss = self._step(x, y, batch_idx, "val")
+
+        # Log accuracy metrics
+        digit_accuracies = []
+        for idx, (pred_digit, label_digit) in enumerate(
+            zip(self.storage["val_preds"][-1].swapaxes(0, 1), self.storage["val_targets"][-1].swapaxes(0, 1))
+        ):
+            good = (pred_digit.argmax(-1) == label_digit.argmax(-1)).sum().item()
+            all_ = len(label_digit)
+            acc = good / all_
+            self.log(f"val_acc_{idx}", acc)
+            digit_accuracies.append(acc)
+
+        self.log("val_acc_mean", sum(digit_accuracies) / len(digit_accuracies))
+
+        return loss
 
     def on_validation_epoch_end(self):
         preds = torch.cat(self.storage["val_preds"]).detach().cpu()
@@ -287,32 +318,48 @@ class Trainee(L.LightningModule):
         )
         return [optimizer], [lr_scheduler]
 
+# Kfold
+kfold = KFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
 # Training
-wandb.finish()
-wandb_logger = L.pytorch.loggers.WandbLogger(
-  project=WANDB_PROJECT,
-  entity=WANDB_ENTITY,
-  name=MODEL_NAME,
-  mode='online',
-  group=WANDB_GROUP,
-  log_model=True,
-)
+for fold, (train_index, test_index) in enumerate(kfold.split(dataset.image_paths)):
 
-model = timm.create_model(
-  MODEL_NAME,
-  pretrained=PRETRAINED,
-  num_classes=30,
-  )
+    train_dataset = ProductDataset([dataset.image_paths[i] for i in train_index], labels_file, train_transforms)
+    val_dataset = ProductDataset([dataset.image_paths[i] for i in test_index], labels_file, val_transforms)
 
-trainer = L.Trainer(logger=wandb_logger, max_epochs=EPOCHS, callbacks=[L.pytorch.callbacks.ModelCheckpoint(monitor="val_accuracy", mode="max")])
-trainee = Trainee(model)
-trainloader = torch.utils.data.DataLoader(
-    dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=True,
-    num_workers=0,  
-    persistent_workers=False,
-    timeout=0  
-)
+    wandb.finish()
+    wandb_logger = L.pytorch.loggers.WandbLogger(
+        project=WANDB_PROJECT,
+        entity=WANDB_ENTITY,
+        name=f"{MODEL_NAME}_fold_{fold + 1}",
+        mode='online',
+        group=WANDB_GROUP,
+        log_model=True,
+    )
 
-trainer.fit(model=trainee, train_dataloaders=trainloader)
+    model = timm.create_model(
+        MODEL_NAME,
+        pretrained=PRETRAINED,
+        num_classes=30,
+    )
+
+    trainer = L.Trainer(logger=wandb_logger, max_epochs=EPOCHS, callbacks=[L.pytorch.callbacks.ModelCheckpoint(monitor="val_acc_mean", mode="max")])
+    trainee = Trainee(model)
+    trainloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=2,
+        persistent_workers=False,
+        timeout=0
+    )
+
+    valloader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=2,
+        persistent_workers=False,
+        timeout=0
+    )
+
+    trainer.fit(model=trainee, train_dataloaders=trainloader, val_dataloaders=valloader)
